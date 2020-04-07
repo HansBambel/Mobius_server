@@ -1,4 +1,4 @@
-# easy-flask-server
+# Mobius-server
 #### Running the server:
 1. Setting up flask app in terminal:
     - In Windows: `set FLASK_APP=server.py`
