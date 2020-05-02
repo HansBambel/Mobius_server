@@ -130,3 +130,5 @@ dmypy.json
 
 api_uploaded_files/
 .idea/
+
+/files
