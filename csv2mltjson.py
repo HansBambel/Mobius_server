@@ -20,8 +20,7 @@ def read_zips_from_folder(folder_name):
 
 def parseDateTimeFromFileName(filename):
     x = filename.split("_")
-    x = x[len(x) - 1].replace('.zip', '').replace('T', '-')
-
+    x = x[len(x) - 1].replace('.zip', '')
     return x
 
 
@@ -36,7 +35,8 @@ for s in sessions:
     # 1. Reading data from zip file
     print("Processing session: " + s)
     recordingID = parseDateTimeFromFileName(s)
-    session_datetime = datetime.strptime(recordingID, "%Y-%m-%d-%H:%M:%S.%f")
+    session_datetime = datetime.strptime(recordingID, "%Y-%m-%dT%H:%M:%S.%f")
+
     new_s = s.replace('files/', 'files/converted/').replace('.zip', '_MLT.zip')
 
     with zipfile.ZipFile(s) as old_zip, \
@@ -56,17 +56,34 @@ for s in sessions:
                     with old_zip.open(filename) as f:
                         data = csv.DictReader(f)
                         csv_file = pd.DataFrame(pd.read_csv(f, sep=",", index_col=False)).rename(
-                            columns=lambda x: x.strip())
-                        # csv_file.set_index('Time',inplace=True)
-                        csv_file = csv_file.groupby('Time').apply(
-                            lambda x: x.drop(['Time'], axis=1).to_dict('r')[0]).reset_index(
-                            name='frameAttributes').rename(columns={"Time": "frameStamp"})
-
-                        csv_file['frameStamp'] = (pd.to_datetime(csv_file['frameStamp'],
+                            columns=lambda x: x.strip().replace(' ','_')).apply(lambda x: x.str.strip() if x.dtype == "object" else x)
+                        if applicationName == 'selfreport':
+                            csv_file = csv_file.groupby('Transportation_Mode', sort=False)['Time'].apply(' '.join).reset_index()
+                            csv_file = csv_file.groupby('Time').apply(lambda x: x.drop(['Time'], axis=1).to_dict('r')[0]).reset_index(
+                                name='annotations')
+                            csv_file[['start', 'end']] = csv_file['Time'].str.split(' ', n=1, expand=True)
+                            csv_file = csv_file.drop(['Time'], axis=1)
+                            csv_file = csv_file[['start','end','annotations']]
+                            #print(csv_file)
+                            csv_file['start'] = (pd.to_datetime(csv_file['start'],
+                                                                      format="%Y-%m-%dT%H:%M:%S.%f") - session_datetime).astype(
+                                 str).map(lambda x: x.replace('0 days ', '')[:-6])
+                            csv_file['end'] = (pd.to_datetime(csv_file['end'],
                                                                  format="%Y-%m-%dT%H:%M:%S.%f") - session_datetime).astype(
-                            str).map(lambda x: x.replace('0 days ','')[:-6])
+                                 str).map(lambda x: x.replace('0 days ', '')[:-6])
+                        else:
+                            csv_file = csv_file.groupby('Time').apply(
+                                lambda x: x.drop(['Time'], axis=1).to_dict('r')[0]).reset_index(
+                                name='frameAttributes').rename(columns={"Time": "frameStamp"})
+                            csv_file['frameStamp'] = (pd.to_datetime(csv_file['frameStamp'],
+                                                                     format="%Y-%m-%dT%H:%M:%S.%f") - session_datetime).astype(
+                                str).map(lambda x: x.replace('0 days ', '')[:-6])
+
                         frameUpdates = csv_file.to_json(orient="records", index=True)
                         data_json['recordingID'] = recordingID
                         data_json['applicationName'] = applicationName
-                        data_json['frames'] = json.loads(frameUpdates.replace("}\n{", "},\n{"))
+                        if applicationName == 'selfreport':
+                            data_json['intervals'] = json.loads(frameUpdates.replace("}\n{", "},\n{"))
+                        else:
+                            data_json['frames'] = json.loads(frameUpdates.replace("}\n{", "},\n{"))
                         new_zip.writestr(filename.replace(".csv", ".json"), json.dumps(data_json, indent=4))
