@@ -5,11 +5,6 @@ import pandas as pd
 from datetime import datetime
 import pickle
 
-folder = "files"
-if not os.path.exists(folder + '/converted'):
-    os.makedirs(folder + '/converted')
-ignore_files = []
-
 
 def read_zips_from_folder(folder_name):
     sessions_folder = [folder_name]
@@ -20,70 +15,80 @@ def read_zips_from_folder(folder_name):
 
 def parseDateTimeFromFileName(filename):
     x = filename.split("_")
-    x = x[len(x) - 1].replace('.zip', '')
+    x = x[-1].replace('.zip', '')
     return x
 
 
-sessions = read_zips_from_folder(folder)
-if len(sessions) <= 0:
-    raise FileNotFoundError(f"No recording sessions found in {folder}")
-# read_data_files(sessions, ignore_files=ignore_files)
+if __name__ == "__main__":
+    sensorFormat = "%Y-%m-%dT%H:%M:%S.%f"
+    folder = "files"
+    os.makedirs(folder + '/converted', exist_ok=True)
+    ignore_files = None
 
+    sessions = read_zips_from_folder(folder)
+    if len(sessions) <= 0:
+        raise FileNotFoundError(f"No recording sessions found in {folder}")
+    # read_data_files(sessions, ignore_files=ignore_files)
 
-# def csv2mltjson():
-for s in sessions:
-    # 1. Reading data from zip file
-    print("Processing session: " + s)
-    recordingID = parseDateTimeFromFileName(s)
-    session_datetime = datetime.strptime(recordingID, "%Y-%m-%dT%H:%M:%S.%f")
+    start_time = time.time()
+    # def csv2mltjson():
+    for s in sessions:
+        # 1. Reading data from zip file
+        print("Processing session: " + s)
+        recordingID = parseDateTimeFromFileName(s)
+        session_datetime = datetime.strptime(recordingID, "%Y-%m-%dT%H-%M-%S-%f")
 
-    new_s = s.replace('files/', 'files/converted/').replace('.zip', '_MLT.zip')
+        new_s = s.replace('files/', 'files/converted/').replace('.zip', '_MLT.zip')
 
-    with zipfile.ZipFile(s) as old_zip, \
-            zipfile.ZipFile(new_s, 'w', compression=zipfile.ZIP_DEFLATED) as new_zip:
-        for filename in old_zip.namelist():
-            # check whether the current file is in files to ignore
-            data_json = {}
-            if ignore_files is not None:
-                skip = sum([ign_f.lower() in filename.lower() for ign_f in ignore_files]) > 0
-                if skip:
-                    continue
-            if not os.path.isdir(filename):
-                x = filename.split("_")
-                applicationName = x[len(x) - 1].replace('.csv', '')
+        with zipfile.ZipFile(s) as old_zip, \
+                zipfile.ZipFile(new_s, 'w', compression=zipfile.ZIP_DEFLATED) as new_zip:
+            for filename in old_zip.namelist():
+                # check whether the current file is in files to ignore
+                data_json = {}
+                if ignore_files is not None:
+                    skip = sum([ign_f.lower() in filename.lower() for ign_f in ignore_files]) > 0
+                    if skip:
+                        continue
+                if not os.path.isdir(filename):
+                    x = filename.split("_")
+                    applicationName = x[-1].replace('.csv', '')
 
-                if '.csv' in filename:
-                    with old_zip.open(filename) as f:
-                        data = csv.DictReader(f)
-                        csv_file = pd.DataFrame(pd.read_csv(f, sep=",", index_col=False)).rename(
-                            columns=lambda x: x.strip().replace(' ','_')).apply(lambda x: x.str.strip() if x.dtype == "object" else x)
-                        if applicationName == 'selfreport':
-                            csv_file = csv_file.groupby('Transportation_Mode', sort=False)['Time'].apply(' '.join).reset_index()
-                            csv_file = csv_file.groupby('Time').apply(lambda x: x.drop(['Time'], axis=1).to_dict('r')[0]).reset_index(
-                                name='annotations')
-                            csv_file[['start', 'end']] = csv_file['Time'].str.split(' ', n=1, expand=True)
-                            csv_file = csv_file.drop(['Time'], axis=1)
-                            csv_file = csv_file[['start','end','annotations']]
-                            #print(csv_file)
-                            csv_file['start'] = (pd.to_datetime(csv_file['start'],
-                                                                      format="%Y-%m-%dT%H:%M:%S.%f") - session_datetime).astype(
-                                 str).map(lambda x: x.replace('0 days ', '')[:-6])
-                            csv_file['end'] = (pd.to_datetime(csv_file['end'],
-                                                                 format="%Y-%m-%dT%H:%M:%S.%f") - session_datetime).astype(
-                                 str).map(lambda x: x.replace('0 days ', '')[:-6])
-                        else:
-                            csv_file = csv_file.groupby('Time').apply(
-                                lambda x: x.drop(['Time'], axis=1).to_dict('r')[0]).reset_index(
-                                name='frameAttributes').rename(columns={"Time": "frameStamp"})
-                            csv_file['frameStamp'] = (pd.to_datetime(csv_file['frameStamp'],
-                                                                     format="%Y-%m-%dT%H:%M:%S.%f") - session_datetime).astype(
-                                str).map(lambda x: x.replace('0 days ', '')[:-6])
+                    if '.csv' in filename:
+                        with old_zip.open(filename) as f:
+                            csv_file = pd.DataFrame(pd.read_csv(f, sep=",", header=0))
+                            # Time diff = record date - session_datetime
+                            # TODO the hardcoded "0 days" could become a problem
+                            csv_file["Time"] = (pd.to_datetime(csv_file['Time'],
+                                                format=sensorFormat) - session_datetime).astype(str).map(
+                                lambda x: x.replace('0 days ', '')[:-6])
+                            if applicationName == 'selfreport':
+                                # start = where selfreport == True
+                                # end = where selfreport == False
+                                new_df = pd.DataFrame()
+                                end_idx = np.where(csv_file["Status"] == False)[0]
 
-                        frameUpdates = csv_file.to_json(orient="records", index=True)
-                        data_json['recordingID'] = recordingID
-                        data_json['applicationName'] = applicationName
-                        if applicationName == 'selfreport':
-                            data_json['intervals'] = json.loads(frameUpdates.replace("}\n{", "},\n{"))
-                        else:
-                            data_json['frames'] = json.loads(frameUpdates.replace("}\n{", "},\n{"))
-                        new_zip.writestr(filename.replace(".csv", ".json"), json.dumps(data_json, indent=4))
+                                new_df["start"] = csv_file["Time"].iloc[end_idx-1].values
+                                new_df["end"] = csv_file["Time"].iloc[end_idx].values
+                                new_df["annotations"] = csv_file.iloc[end_idx]["Transportation_Mode"].values
+                                # Make a dictionary from the Transportation_values
+                                new_df["annotations"] = new_df["annotations"].apply(lambda x: {"Transportation_Mode": x})
+                                csv_file = new_df
+                                #print(csv_file)
+
+                            else:
+                                # Sensor files (gps and sensors)
+                                csv_file.rename(columns={"Time": "frameStamp"}, inplace=True)
+                                # csv_file["frameAttributes"] =
+                                csv_file = csv_file.groupby('frameStamp').apply(
+                                    lambda x: x.drop(['frameStamp'], axis=1).to_dict('r')[0]).reset_index(
+                                    name='frameAttributes')
+
+                            frameUpdates = csv_file.to_json(orient="records", index=True)
+                            data_json['recordingID'] = recordingID
+                            data_json['applicationName'] = applicationName
+                            if applicationName == 'selfreport':
+                                data_json['intervals'] = json.loads(frameUpdates.replace("}\n{", "},\n{"))
+                            else:
+                                data_json['frames'] = json.loads(frameUpdates.replace("}\n{", "},\n{"))
+                            new_zip.writestr(filename.replace(".csv", ".json"), json.dumps(data_json, indent=4))
+    print(f"Processing took {time.time()-start_time:.3f} seconds")
