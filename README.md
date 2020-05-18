@@ -4,6 +4,13 @@
     - In Windows: `set FLASK_APP=server.py`
     - In Linux: `export FLASK_APP=server.py`
 2. To run the server: `flask run`
+
+**Note:** if run on an Azure instance for example the application will be killed when you close the ssh connection. Instead use `tmux`:
+1. Start a tmux session: `tmux`
+2. Do the steps from above here
+3. Exit the `tmux` window by pressing `ctrl`+`b` and then `d` (detach)
+4. To enter a running tmux session: `tmux attach`
+5. To close it: go into the session and write `exit`
  
  Optional: 
  - to run flask app in debug mode `set FLASK_DEBUG=1` or `export FLASK_DEBUG=1` before running the server.
